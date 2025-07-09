@@ -11,8 +11,9 @@ homepage = "https://github.com/prometheus/client_rust"
 documentation = "https://docs.rs/prometheus-client"
 
 [features]
-default = []
+default = ["summary"]
 protobuf = ["dep:prost", "dep:prost-types", "dep:prost-build"]
+summary = ["dep:quanta", "dep:quantiles"]
 
 [workspace]
 members = ["derive-encode"]
@@ -24,6 +25,8 @@ parking_lot = "0.12"
 prometheus-client-derive-encode = { version = "0.5.0", path = "derive-encode" }
 prost = { version = "0.12.0", optional = true }
 prost-types = { version = "0.12.0", optional = true }
+quanta = { version = "0.12.6", optional = true }
+quantiles = { version = "0.7.1", optional = true }
 
 [dev-dependencies]
 async-std = { version = "1", features = ["attributes"] }

@@ -444,6 +444,40 @@ impl MetricEncoder<'_> {
         Ok(())
     }
 
+    #[cfg(feature = "summary")]
+    pub fn encode_summary<S: EncodeLabelSet>(
+        &mut self,
+        sum: f64,
+        count: u64,
+        quantiles: &[(f64, f64)],
+    ) -> Result<(), std::fmt::Error> {
+        self.write_prefix_name_unit()?;
+        self.write_suffix("sum")?;
+        self.encode_labels::<NoLabelSet>(None)?;
+        self.writer.write_str(" ")?;
+        self.writer.write_str(dtoa::Buffer::new().format(sum))?;
+        self.newline()?;
+
+        self.write_prefix_name_unit()?;
+        self.write_suffix("count")?;
+        self.encode_labels::<NoLabelSet>(None)?;
+        self.writer.write_str(" ")?;
+        self.writer.write_str(itoa::Buffer::new().format(count))?;
+        self.newline()?;
+
+        for (_, (quantile, result)) in quantiles.iter().enumerate() {
+            self.write_prefix_name_unit()?;
+            self.encode_labels(Some(&[("quantile", *quantile)]))?;
+
+            self.writer.write_str(" ")?;
+            self.writer.write_str(result.to_string().as_str())?;
+
+            self.newline()?;
+        }
+
+        Ok(())
+    }
+
     /// Encode an exemplar for the given metric.
     fn encode_exemplar<S: EncodeLabelSet, V: EncodeExemplarValue>(
         &mut self,
@@ -976,6 +1010,34 @@ mod tests {
             + "my_histogram_bucket{le=\"256.0\"} 1\n"
             + "my_histogram_bucket{le=\"512.0\"} 1\n"
             + "my_histogram_bucket{le=\"+Inf\"} 1\n"
+            + "# EOF\n";
+        assert_eq!(expected, encoded);
+
+        parse_with_python_client(encoded);
+    }
+
+    #[cfg(feature = "summary")]
+    #[test]
+    fn encode_summary() {
+        use crate::metrics::summary::Summary;
+
+        let mut registry = Registry::default();
+        let summary = Summary::new(std::time::Duration::from_secs(3), 10, vec![0.5, 0.9, 0.99], 0.0);
+        registry.register("my_summary", "My summary", summary.clone());
+        summary.observe(0.10);
+        summary.observe(0.20);
+        summary.observe(0.30);
+
+        let mut encoded = String::new();
+        encode(&mut encoded, &registry).unwrap();
+
+        let expected = "# HELP my_summary My summary.\n".to_owned()
+            + "# TYPE my_summary summary\n"
+            + "my_summary_sum 0.6000000000000001\n"
+            + "my_summary_count 3\n"
+            + "my_summary{quantile=\"0.5\"} 0.2\n"
+            + "my_summary{quantile=\"0.9\"} 0.3\n"
+            + "my_summary{quantile=\"0.99\"} 0.3\n"
             + "# EOF\n";
         assert_eq!(expected, encoded);
 
