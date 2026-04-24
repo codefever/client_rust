@@ -444,6 +444,38 @@ impl MetricEncoder<'_> {
         Ok(())
     }
 
+    #[cfg(feature = "summary")]
+    pub fn encode_summary(
+        &mut self,
+        sum: f64,
+        count: u64,
+        quantiles: &[(f64, f64)],
+    ) -> Result<(), std::fmt::Error> {
+        for (quantile, value) in quantiles {
+            self.write_prefix_name_unit()?;
+            self.encode_labels(Some(&[("quantile", *quantile)]))?;
+            self.writer.write_str(" ")?;
+            self.writer.write_str(dtoa::Buffer::new().format(*value))?;
+            self.newline()?;
+        }
+
+        self.write_prefix_name_unit()?;
+        self.write_suffix("sum")?;
+        self.encode_labels::<NoLabelSet>(None)?;
+        self.writer.write_str(" ")?;
+        self.writer.write_str(dtoa::Buffer::new().format(sum))?;
+        self.newline()?;
+
+        self.write_prefix_name_unit()?;
+        self.write_suffix("count")?;
+        self.encode_labels::<NoLabelSet>(None)?;
+        self.writer.write_str(" ")?;
+        self.writer.write_str(itoa::Buffer::new().format(count))?;
+        self.newline()?;
+
+        Ok(())
+    }
+
     /// Encode an exemplar for the given metric.
     fn encode_exemplar<S: EncodeLabelSet, V: EncodeExemplarValue>(
         &mut self,
@@ -1013,6 +1045,34 @@ mod tests {
             + "my_histogram_bucket{le=\"+Inf\"} 2\n"
             + "# EOF\n";
         assert_eq!(expected, encoded);
+
+        parse_with_python_client(encoded);
+    }
+
+    #[cfg(feature = "summary")]
+    #[test]
+    fn encode_summary() {
+        use crate::metrics::summary::Summary;
+
+        let mut registry = Registry::default();
+        let summary = Summary::new(std::time::Duration::from_secs(3), 10, vec![0.5, 0.9, 0.99]);
+        registry.register("my_summary", "My summary", summary.clone());
+        summary.observe(1.0);
+        summary.observe(2.0);
+        summary.observe(3.0);
+
+        let mut encoded = String::new();
+        encode(&mut encoded, &registry).unwrap();
+
+        // quantile samples come before _sum / _count (OpenMetrics order)
+        assert!(encoded.contains("my_summary{quantile=\"0.5\"}"));
+        assert!(encoded.contains("my_summary{quantile=\"0.9\"}"));
+        assert!(encoded.contains("my_summary{quantile=\"0.99\"}"));
+        let sum_pos = encoded.find("my_summary_sum 6.0\n").expect("_sum line missing");
+        let count_pos = encoded.find("my_summary_count 3\n").expect("_count line missing");
+        let q_pos = encoded.find("my_summary{quantile=").expect("quantile line missing");
+        assert!(q_pos < sum_pos, "quantiles must precede _sum");
+        assert!(sum_pos < count_pos, "_sum must precede _count");
 
         parse_with_python_client(encoded);
     }
